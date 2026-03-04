@@ -43,6 +43,21 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
+## Tool Preferences
+
+### Wetter / Weather
+
+Use `curl` with wttr.in instead of `agent-browser` for weather data — it's much faster:
+
+```bash
+curl -s "wttr.in/Frankfurt?format=j1&lang=de"   # JSON with full forecast
+curl -s "wttr.in/Frankfurt?lang=de"              # human-readable text
+```
+
+Parse the JSON to extract temperatures, conditions, and warnings for the next 2 days.
+
+---
+
 ## WhatsApp Formatting (and other messaging apps)
 
 Do NOT use markdown headings (##) in WhatsApp messages. Only use:
