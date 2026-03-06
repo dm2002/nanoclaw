@@ -7,6 +7,7 @@ import {
   TRIGGER_PATTERN,
 } from '../config.js';
 import { logger } from '../logger.js';
+import { transcribeBuffer } from '../transcription.js';
 import {
   Channel,
   OnChatMetadata,
@@ -193,10 +194,67 @@ export class TelegramChannel implements Channel {
       });
     };
 
+    // Download audio from Telegram and transcribe via whisper.cpp
+    const storeAudio = async (ctx: any, fileId: string, ext: string) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const senderId = ctx.from?.id?.toString() || '';
+      if (
+        TELEGRAM_ALLOWED_USER_IDS.size > 0 &&
+        !TELEGRAM_ALLOWED_USER_IDS.has(senderId)
+      ) {
+        logger.debug({ sender: senderId, chatJid }, 'Telegram audio ignored: sender not in allowlist');
+        return;
+      }
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+
+      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+
+      try {
+        const file = await this.bot!.api.getFile(fileId);
+        const filePath = file.file_path;
+        if (!filePath) throw new Error('No file_path returned');
+
+        const url = `https://api.telegram.org/file/bot${this.botToken}/${filePath}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        logger.info({ chatJid, bytes: buffer.length }, 'Telegram audio downloaded');
+
+        const transcript = await transcribeBuffer(buffer, ext);
+        if (transcript) {
+          await ctx.reply(`🎤 ${transcript}`);
+          logger.info({ chatJid }, 'Transcription sent, agent not invoked');
+        } else {
+          await ctx.reply('🎤 Transkription nicht verfügbar');
+        }
+      } catch (err) {
+        logger.error({ err, chatJid }, 'Audio transcription failed');
+        await ctx.reply('🎤 Transkription fehlgeschlagen').catch(() => {});
+      }
+    };
+
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
-    this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
+    this.bot.on('message:voice', (ctx) => {
+      const fileId = ctx.message.voice?.file_id;
+      if (fileId) storeAudio(ctx, fileId, 'ogg').catch((err) => logger.error({ err }, 'storeAudio error'));
+      else storeNonText(ctx, '[Voice message]');
+    });
+    this.bot.on('message:audio', (ctx) => {
+      const fileId = ctx.message.audio?.file_id;
+      if (fileId) storeAudio(ctx, fileId, 'mp3').catch((err) => logger.error({ err }, 'storeAudio error'));
+      else storeNonText(ctx, '[Audio]');
+    });
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
       storeNonText(ctx, `[Document: ${name}]`);
